@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: Plugin
+metadata:
+  author: chenwu
+  name: wecom_assistant_plugin
+  repository: 'https://github.com/langbot-app/LangBot'
+  version: 0.1.0
+  description:
+    en_US: LangBot plugin for WeCom message context capture and reply interception
+    zh_Hans: 企业微信消息上下文采集与回复拦截的 LangBot 插件
+  label:
+    en_US: WeCom Assistant Plugin
+    zh_Hans: 企业微信助手插件
+  icon: assets/icon.svg
+spec:
+  config:
+    - name: redis_url
+      type: string
+      label:
+        en_US: Redis URL
+        zh_Hans: Redis 连接 URL
+      description:
+        en_US: 'e.g. redis://:password@127.0.0.1:6379/0'
+        zh_Hans: '形如 redis://:password@127.0.0.1:6379/0'
+      required: true
+
+    - name: redis_key
+      type: string
+      label:
+        en_US: Redis List Key
+        zh_Hans: Redis 列表 Key
+      description:
+        en_US: 'List key to push logs to'
+        zh_Hans: '用于存储日志的 Redis 列表 Key'
+      default: 'langbot:wecom:llm_replies'
+      required: false
+    - name: redis_stream_prefix
+      type: string
+      label:
+        en_US: Redis Stream Prefix
+        zh_Hans: Redis Stream 前缀
+      description:
+        en_US: 'Prefix of bot-level Redis Streams, e.g. langbot:wecom:stream'
+        zh_Hans: '每个机器人一个 Stream 的 Key 前缀，如 langbot:wecom:stream'
+      default: 'langbot:wecom:stream'
+      required: false
+         
+  components:
+      EventListener:
+        fromDirs:
+          - path: components/event_listener/
+execution:
+  python:
+    path: main.py
+    attr: WecomAssistantPlugin
