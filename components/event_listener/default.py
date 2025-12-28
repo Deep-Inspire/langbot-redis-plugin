@@ -27,17 +27,30 @@ class DefaultEventListener(EventListener):
             internal_agent_id = None
             external_customer_id = None
 
+            print(f"[WeComRedisLogger-DEBUG] on_normal_message_received called")
+            print(f"[WeComRedisLogger-DEBUG] source_platform_object exists: {source_platform_object is not None}")
+
             if source_platform_object:
                 # 从原始消息中获取内部客服 ID
                 internal_agent_id = source_platform_object.get('_internal_recipient')
                 # 获取外部客户 ID（发送者）
                 external_customer_id = source_platform_object.get('from')
 
+                print(f"[WeComRedisLogger-DEBUG] _internal_recipient: {internal_agent_id}")
+                print(f"[WeComRedisLogger-DEBUG] from: {external_customer_id}")
+
             # 保存到 query context 中
             if internal_agent_id:
                 await event_context.set_query_var("internal_agent_id", internal_agent_id)
+                print(f"[WeComRedisLogger-DEBUG] Saved internal_agent_id to query context")
+            else:
+                print(f"[WeComRedisLogger-DEBUG] WARNING: internal_agent_id is None!")
+
             if external_customer_id:
                 await event_context.set_query_var("external_customer_id", external_customer_id)
+                print(f"[WeComRedisLogger-DEBUG] Saved external_customer_id to query context")
+            else:
+                print(f"[WeComRedisLogger-DEBUG] WARNING: external_customer_id is None!")
 
             msg_chain: platform_message.MessageChain = event.message_chain
 
@@ -77,16 +90,24 @@ class DefaultEventListener(EventListener):
             launcher_id = str(event.launcher_id)
             cfg = self.plugin.get_config() or {}
 
+            print(f"[WeComRedisLogger-DEBUG] on_llm_responded called")
+            print(f"[WeComRedisLogger-DEBUG] launcher_id: {launcher_id}")
+            print(f"[WeComRedisLogger-DEBUG] sender_id: {event.sender_id}")
+
             # 从 query context 获取双方身份信息
             try:
                 internal_agent_id = await event_context.get_query_var("internal_agent_id")
-            except Exception:
+                print(f"[WeComRedisLogger-DEBUG] Got internal_agent_id from query context: {internal_agent_id}")
+            except Exception as e:
                 internal_agent_id = launcher_id  # 降级方案
+                print(f"[WeComRedisLogger-DEBUG] Failed to get internal_agent_id, using launcher_id as fallback: {e}")
 
             try:
                 external_customer_id = await event_context.get_query_var("external_customer_id")
-            except Exception:
+                print(f"[WeComRedisLogger-DEBUG] Got external_customer_id from query context: {external_customer_id}")
+            except Exception as e:
                 external_customer_id = str(event.sender_id)  # 降级方案
+                print(f"[WeComRedisLogger-DEBUG] Failed to get external_customer_id, using sender_id as fallback: {e}")
 
             reply_text = event.response_text
             ts = int(time.time())
