@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from typing import Any, Dict, List, Optional
 
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
 from langbot_plugin.api.entities import events, context
 from langbot_plugin.api.entities.builtin.platform import message as platform_message
+
+# Debug flag - can be controlled via environment variable
+DEBUG_WECOM_REDIS = os.getenv('DEBUG_WECOM_REDIS', 'false').lower() in ('true', '1', 'yes')
 
 
 class DefaultEventListener(EventListener):
@@ -27,8 +31,9 @@ class DefaultEventListener(EventListener):
             internal_agent_id = None
             external_customer_id = None
 
-            print(f"[WeComRedisLogger-DEBUG] on_normal_message_received called")
-            print(f"[WeComRedisLogger-DEBUG] source_platform_object exists: {source_platform_object is not None}")
+            if DEBUG_WECOM_REDIS:
+                print(f"[WeComRedisLogger-DEBUG] on_normal_message_received called")
+                print(f"[WeComRedisLogger-DEBUG] source_platform_object exists: {source_platform_object is not None}")
 
             if source_platform_object:
                 # 从原始消息中获取内部客服 ID
@@ -36,20 +41,23 @@ class DefaultEventListener(EventListener):
                 # 获取外部客户 ID（发送者）
                 external_customer_id = source_platform_object.get('from')
 
-                print(f"[WeComRedisLogger-DEBUG] _internal_recipient: {internal_agent_id}")
-                print(f"[WeComRedisLogger-DEBUG] from: {external_customer_id}")
+                if DEBUG_WECOM_REDIS:
+                    print(f"[WeComRedisLogger-DEBUG] _internal_recipient: {internal_agent_id}")
+                    print(f"[WeComRedisLogger-DEBUG] from: {external_customer_id}")
 
             # 保存到 query context 中
             if internal_agent_id:
                 await event_context.set_query_var("internal_agent_id", internal_agent_id)
-                print(f"[WeComRedisLogger-DEBUG] Saved internal_agent_id to query context")
-            else:
+                if DEBUG_WECOM_REDIS:
+                    print(f"[WeComRedisLogger-DEBUG] Saved internal_agent_id to query context")
+            elif DEBUG_WECOM_REDIS:
                 print(f"[WeComRedisLogger-DEBUG] WARNING: internal_agent_id is None!")
 
             if external_customer_id:
                 await event_context.set_query_var("external_customer_id", external_customer_id)
-                print(f"[WeComRedisLogger-DEBUG] Saved external_customer_id to query context")
-            else:
+                if DEBUG_WECOM_REDIS:
+                    print(f"[WeComRedisLogger-DEBUG] Saved external_customer_id to query context")
+            elif DEBUG_WECOM_REDIS:
                 print(f"[WeComRedisLogger-DEBUG] WARNING: external_customer_id is None!")
 
             msg_chain: platform_message.MessageChain = event.message_chain
@@ -90,24 +98,29 @@ class DefaultEventListener(EventListener):
             launcher_id = str(event.launcher_id)
             cfg = self.plugin.get_config() or {}
 
-            print(f"[WeComRedisLogger-DEBUG] on_llm_responded called")
-            print(f"[WeComRedisLogger-DEBUG] launcher_id: {launcher_id}")
-            print(f"[WeComRedisLogger-DEBUG] sender_id: {event.sender_id}")
+            if DEBUG_WECOM_REDIS:
+                print(f"[WeComRedisLogger-DEBUG] on_llm_responded called")
+                print(f"[WeComRedisLogger-DEBUG] launcher_id: {launcher_id}")
+                print(f"[WeComRedisLogger-DEBUG] sender_id: {event.sender_id}")
 
             # 从 query context 获取双方身份信息
             try:
                 internal_agent_id = await event_context.get_query_var("internal_agent_id")
-                print(f"[WeComRedisLogger-DEBUG] Got internal_agent_id from query context: {internal_agent_id}")
+                if DEBUG_WECOM_REDIS:
+                    print(f"[WeComRedisLogger-DEBUG] Got internal_agent_id from query context: {internal_agent_id}")
             except Exception as e:
                 internal_agent_id = launcher_id  # 降级方案
-                print(f"[WeComRedisLogger-DEBUG] Failed to get internal_agent_id, using launcher_id as fallback: {e}")
+                if DEBUG_WECOM_REDIS:
+                    print(f"[WeComRedisLogger-DEBUG] Failed to get internal_agent_id, using launcher_id as fallback: {e}")
 
             try:
                 external_customer_id = await event_context.get_query_var("external_customer_id")
-                print(f"[WeComRedisLogger-DEBUG] Got external_customer_id from query context: {external_customer_id}")
+                if DEBUG_WECOM_REDIS:
+                    print(f"[WeComRedisLogger-DEBUG] Got external_customer_id from query context: {external_customer_id}")
             except Exception as e:
                 external_customer_id = str(event.sender_id)  # 降级方案
-                print(f"[WeComRedisLogger-DEBUG] Failed to get external_customer_id, using sender_id as fallback: {e}")
+                if DEBUG_WECOM_REDIS:
+                    print(f"[WeComRedisLogger-DEBUG] Failed to get external_customer_id, using sender_id as fallback: {e}")
 
             reply_text = event.response_text
             ts = int(time.time())
@@ -164,10 +177,11 @@ class DefaultEventListener(EventListener):
                     approximate=True,
                 )
 
-                print(f"[WeComRedisLogger] ✅ 推送成功")
-                print(f"[WeComRedisLogger] 对话: {external_customer_id} -> {internal_agent_id}")
-                print(f"[WeComRedisLogger] Stream: {redis_stream_key}")
-                print(f"[WeComRedisLogger] Payload: {log_obj}")
+                if DEBUG_WECOM_REDIS:
+                    print(f"[WeComRedisLogger] ✅ 推送成功")
+                    print(f"[WeComRedisLogger] 对话: {external_customer_id} -> {internal_agent_id}")
+                    print(f"[WeComRedisLogger] Stream: {redis_stream_key}")
+                    print(f"[WeComRedisLogger] Payload: {log_obj}")
             except Exception as e:
                 print(f"[WeComRedisLogger] ❌ 推送失败: {e}")
                 print(f"[WeComRedisLogger] Payload: {log_obj}")
