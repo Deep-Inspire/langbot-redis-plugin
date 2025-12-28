@@ -167,6 +167,7 @@ class DefaultEventListener(EventListener):
                 print(f"[WeComRedisLogger] ✅ 推送成功")
                 print(f"[WeComRedisLogger] 对话: {external_customer_id} -> {internal_agent_id}")
                 print(f"[WeComRedisLogger] Stream: {redis_stream_key}")
+                print(f"[WeComRedisLogger] Payload: {log_obj}")
             except Exception as e:
                 print(f"[WeComRedisLogger] ❌ 推送失败: {e}")
                 print(f"[WeComRedisLogger] Payload: {log_obj}")
