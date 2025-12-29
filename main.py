@@ -2,35 +2,97 @@
 # Please refer to https://docs.langbot.app/en/plugin/dev/tutor.html for more details.
 from __future__ import annotations
 
+import logging
+import os
+from datetime import datetime
+from pathlib import Path
+
 from langbot_plugin.api.definition.plugin import BasePlugin
 
 
 class WecomAssistantPlugin(BasePlugin):
 
-
     def __init__(self):
         super().__init__()
         self._redis = None
+        self._logger = self._setup_logger()
+
+    def _setup_logger(self):
+        """Setup file logger for better debugging"""
+        log_dir = Path(__file__).parent / "logs"
+        log_dir.mkdir(exist_ok=True)
+
+        log_file = log_dir / f"wecom_redis_plugin_{datetime.now().strftime('%Y%m%d')}.log"
+
+        logger = logging.getLogger("WecomRedisPlugin")
+        logger.setLevel(logging.DEBUG)
+
+        # Avoid adding duplicate handlers
+        if not logger.handlers:
+            file_handler = logging.FileHandler(log_file, encoding='utf-8')
+            file_handler.setLevel(logging.DEBUG)
+
+            formatter = logging.Formatter(
+                '[%(asctime)s] [%(levelname)s] %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            )
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+
+        return logger
 
     async def get_redis(self):
+        """Get Redis connection with health check and auto-reconnect"""
+        import redis.asyncio as redis
+
+        cfg = self.get_config()
+        redis_url = cfg.get("redis_url") or "redis://127.0.0.1:6379/0"
+
+        # Create new connection if not exists
         if self._redis is None:
-            import redis.asyncio as redis
+            self._logger.info(f"Creating new Redis connection to {redis_url}")
+            try:
+                self._redis = redis.from_url(
+                    redis_url,
+                    encoding="utf-8",
+                    decode_responses=True,
+                    socket_timeout=5,
+                    socket_connect_timeout=5,
+                    socket_keepalive=True,
+                    health_check_interval=30,
+                    retry_on_timeout=True,
+                    max_connections=10,
+                )
+                self._logger.info("Redis connection created successfully")
+            except Exception as e:
+                self._logger.error(f"Failed to create Redis connection: {e}", exc_info=True)
+                raise
 
-            cfg = self.get_config()   
-            redis_url = cfg.get("redis_url") or "redis://127.0.0.1:6379/0"
-
-            
-            self._redis = redis.from_url(
-                redis_url,
-                encoding="utf-8",
-                decode_responses=True,
-            )
+        # Health check
+        try:
+            await self._redis.ping()
+            self._logger.debug("Redis health check passed")
+        except Exception as e:
+            self._logger.warning(f"Redis health check failed: {e}, reconnecting...")
+            try:
+                await self._redis.close()
+            except Exception:
+                pass
+            self._redis = None
+            # Recursive call to reconnect
+            return await self.get_redis()
 
         return self._redis
 
     async def on_unload(self):
-
+        """Clean up Redis connection"""
+        self._logger.info("Plugin unloading, closing Redis connection...")
         if self._redis is not None:
-            await self._redis.close()
-            self._redis = None
+            try:
+                await self._redis.close()
+                self._logger.info("Redis connection closed successfully")
+            except Exception as e:
+                self._logger.error(f"Error closing Redis connection: {e}", exc_info=True)
+            finally:
+                self._redis = None
 

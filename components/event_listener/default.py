@@ -159,32 +159,70 @@ class DefaultEventListener(EventListener):
             stream_prefix = cfg.get("redis_stream_prefix") or "langbot:wecom:stream"
             redis_stream_key = f"{stream_prefix}:{internal_agent_id}"
 
-            try:
-                redis = await self.plugin.get_redis()
-                json_str = json.dumps(log_obj, ensure_ascii=False)
-                await redis.rpush(redis_list_key, json_str)
-                await redis.xadd(
-                    redis_stream_key,
-                    {
-                        "payload": json_str,
-                        "external_customer_id": external_customer_id,
-                        "internal_agent_id": internal_agent_id,
-                        "timestamp": str(ts),
-                        "user_message_type": origin_message_type or "",
-                        "reply_message_type": reply_message_type,
-                    },
-                    maxlen=1000,
-                    approximate=True,
-                )
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    redis = await self.plugin.get_redis()
+                    json_str = json.dumps(log_obj, ensure_ascii=False)
 
-                if DEBUG_WECOM_REDIS:
-                    print(f"[WeComRedisLogger] ✅ 推送成功")
-                    print(f"[WeComRedisLogger] 对话: {external_customer_id} -> {internal_agent_id}")
-                    print(f"[WeComRedisLogger] Stream: {redis_stream_key}")
+                    # Execute Redis operations with timeout
+                    import asyncio
+                    await asyncio.wait_for(
+                        redis.rpush(redis_list_key, json_str),
+                        timeout=3.0
+                    )
+                    await asyncio.wait_for(
+                        redis.xadd(
+                            redis_stream_key,
+                            {
+                                "payload": json_str,
+                                "external_customer_id": external_customer_id,
+                                "internal_agent_id": internal_agent_id,
+                                "timestamp": str(ts),
+                                "user_message_type": origin_message_type or "",
+                                "reply_message_type": reply_message_type,
+                            },
+                            maxlen=1000,
+                            approximate=True,
+                        ),
+                        timeout=3.0
+                    )
+
+                    if DEBUG_WECOM_REDIS:
+                        print(f"[WeComRedisLogger] ✅ 推送成功")
+                        print(f"[WeComRedisLogger] 对话: {external_customer_id} -> {internal_agent_id}")
+                        print(f"[WeComRedisLogger] Stream: {redis_stream_key}")
+                        print(f"[WeComRedisLogger] Payload: {log_obj}")
+
+                    self.plugin._logger.info(f"Successfully pushed to Redis: {redis_stream_key}")
+                    break  # Success, exit retry loop
+
+                except asyncio.TimeoutError as e:
+                    self.plugin._logger.error(
+                        f"Redis operation timeout (attempt {attempt + 1}/{max_retries}): {e}",
+                        exc_info=True
+                    )
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(1)  # Wait before retry
+                        print(f"[WeComRedisLogger] ⚠️ Timeout, retrying ({attempt + 2}/{max_retries})...")
+                    else:
+                        print(f"[WeComRedisLogger] ❌ 推送失败 (timeout after {max_retries} attempts)")
+                        print(f"[WeComRedisLogger] Payload: {log_obj}")
+
+                except Exception as e:
+                    self.plugin._logger.error(
+                        f"Redis operation failed (attempt {attempt + 1}/{max_retries}): {e}",
+                        exc_info=True
+                    )
+                    print(f"[WeComRedisLogger] ❌ 推送失败: {e}")
                     print(f"[WeComRedisLogger] Payload: {log_obj}")
-            except Exception as e:
-                print(f"[WeComRedisLogger] ❌ 推送失败: {e}")
-                print(f"[WeComRedisLogger] Payload: {log_obj}")
+
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(1)  # Wait before retry
+                        print(f"[WeComRedisLogger] ⚠️ Retrying ({attempt + 2}/{max_retries})...")
+                    else:
+                        print(f"[WeComRedisLogger] ❌ All retry attempts failed")
+                        break
 
 
             event_context.prevent_default()
