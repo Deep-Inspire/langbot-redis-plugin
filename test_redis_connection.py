@@ -2,23 +2,56 @@
 """
 Test script to verify Redis connection and health check mechanism.
 Run this script to test the Redis connection before running the plugin.
+
+Usage:
+    python3 test_redis_connection.py
+    python3 test_redis_connection.py redis://:password@127.0.0.1:16379/0
+    REDIS_URL="redis://:password@127.0.0.1:16379/0" python3 test_redis_connection.py
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+def get_redis_url():
+    """Get Redis URL from command line args, environment variable, or use default"""
+    # Priority: 1. Command line arg, 2. Environment variable, 3. Default
+    if len(sys.argv) > 1:
+        return sys.argv[1]
+
+    env_url = os.getenv("REDIS_URL")
+    if env_url:
+        return env_url
+
+    # Default (no password)
+    return "redis://127.0.0.1:16379/0"
+
+def mask_password(url: str) -> str:
+    """Mask password in Redis URL for display"""
+    if ":" in url and "@" in url:
+        # Format: redis://:password@host:port/db or redis://user:password@host:port/db
+        parts = url.split("@")
+        if len(parts) == 2:
+            auth_part = parts[0]
+            host_part = parts[1]
+            if "//" in auth_part and ":" in auth_part:
+                prefix = auth_part.split("//")[0] + "//"
+                return f"{prefix}***@{host_part}"
+    return url
+
 async def test_redis_connection():
     """Test Redis connection with the same parameters used in the plugin"""
     import redis.asyncio as redis
 
-    # Use the same Redis URL as the plugin default
-    redis_url = "redis://127.0.0.1:16379/0"
+    # Get Redis URL
+    redis_url = get_redis_url()
+    masked_url = mask_password(redis_url)
 
-    print(f"Testing Redis connection to: {redis_url}")
+    print(f"Testing Redis connection to: {masked_url}")
     print("-" * 50)
 
     try:
@@ -104,10 +137,12 @@ async def test_long_running_connection():
     """Test that connection stays alive over time"""
     import redis.asyncio as redis
 
-    redis_url = "redis://127.0.0.1:16379/0"
+    redis_url = get_redis_url()
+    masked_url = mask_password(redis_url)
 
     print("\n" + "=" * 50)
-    print("Testing long-running connection (30 seconds)...")
+    print(f"Testing long-running connection (30 seconds)...")
+    print(f"Redis URL: {masked_url}")
     print("=" * 50)
 
     try:

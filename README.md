@@ -5,7 +5,11 @@ LangBot plugin for WeCom information collection and reply interception.
 ## Usage
 1. Place the whole folder under the langbot root path.
 2. Activate the langbot virtual environment: `source ./.venv/bin/activate`
-3. Run the plugin: `lbp run`
+3. Configure Redis URL in LangBot WebUI (Settings -> Plugins -> wecom_assistant_plugin):
+   - Without password: `redis://127.0.0.1:16379/0`
+   - With password: `redis://:your_password@127.0.0.1:16379/0`
+   - With username and password: `redis://username:password@127.0.0.1:16379/0`
+4. Run the plugin: `lbp run`
 
 ## Logging
 
@@ -49,11 +53,45 @@ Redis connection parameters (optimized for long-running sessions):
 - `retry_on_timeout`: Enabled
 - `max_connections`: 10
 
+## Testing
+
+Before running the plugin, test your Redis connection:
+
+### Without password:
+```bash
+python3 test_redis_connection.py
+```
+
+### With password:
+```bash
+python3 test_redis_connection.py "redis://:your_password@127.0.0.1:16379/0"
+```
+
+Or use environment variable:
+```bash
+REDIS_URL="redis://:your_password@127.0.0.1:16379/0" python3 test_redis_connection.py
+```
+
 ## Troubleshooting
 
 If you encounter timeout errors after running the plugin for a long time:
 
 1. Check the log file for detailed error messages
-2. Verify Redis is still running: `redis-cli -p 16379 ping`
-3. Check Redis connection list: `redis-cli -p 16379 CLIENT LIST`
+2. Verify Redis is still running:
+   - Without password: `redis-cli -p 16379 ping`
+   - With password: `redis-cli -p 16379 -a your_password ping`
+3. Check Redis connection list:
+   - Without password: `redis-cli -p 16379 CLIENT LIST`
+   - With password: `redis-cli -p 16379 -a your_password CLIENT LIST`
 4. The plugin will automatically attempt to reconnect if the connection fails
+
+### Common Issues
+
+**Authentication Error**: Make sure the Redis URL in plugin configuration includes the password:
+- Format: `redis://:password@host:port/db`
+- Example: `redis://:mypassword@127.0.0.1:16379/0`
+
+**Connection Refused**: Check if Redis is running and listening on the correct port:
+```bash
+redis-cli -p 16379 -a your_password ping
+```
