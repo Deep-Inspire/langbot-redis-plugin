@@ -103,43 +103,31 @@ class DefaultEventListener(EventListener):
                 print(f"[WeComRedisLogger-DEBUG] launcher_id: {launcher_id}")
                 print(f"[WeComRedisLogger-DEBUG] sender_id: {event.sender_id}")
 
-            # 从 query context 获取双方身份信息
-            try:
-                internal_agent_id = await event_context.get_query_var("internal_agent_id")
-                if DEBUG_WECOM_REDIS:
-                    print(f"[WeComRedisLogger-DEBUG] Got internal_agent_id from query context: {internal_agent_id}")
-            except Exception as e:
-                internal_agent_id = launcher_id  # 降级方案
-                if DEBUG_WECOM_REDIS:
-                    print(f"[WeComRedisLogger-DEBUG] Failed to get internal_agent_id, using launcher_id as fallback: {e}")
+            # Helper function to safely get query variables with fallback
+            async def safe_get_query_var(key: str, default=None):
+                """Safely get query variable with default value, avoiding KeyError exceptions"""
+                try:
+                    value = await event_context.get_query_var(key)
+                    if DEBUG_WECOM_REDIS:
+                        print(f"[WeComRedisLogger-DEBUG] Got {key} from query context: {value}")
+                    return value
+                except Exception as e:
+                    if DEBUG_WECOM_REDIS:
+                        print(f"[WeComRedisLogger-DEBUG] Failed to get {key}, using default: {default} (error: {e})")
+                    return default
 
-            try:
-                external_customer_id = await event_context.get_query_var("external_customer_id")
-                if DEBUG_WECOM_REDIS:
-                    print(f"[WeComRedisLogger-DEBUG] Got external_customer_id from query context: {external_customer_id}")
-            except Exception as e:
-                external_customer_id = str(event.sender_id)  # 降级方案
-                if DEBUG_WECOM_REDIS:
-                    print(f"[WeComRedisLogger-DEBUG] Failed to get external_customer_id, using sender_id as fallback: {e}")
+            # Get identity info from query context with fallbacks
+            internal_agent_id = await safe_get_query_var("internal_agent_id", launcher_id)
+            external_customer_id = await safe_get_query_var("external_customer_id", str(event.sender_id))
 
             reply_text = event.response_text
             ts = int(time.time())
             reply_message_type = "text"
 
-            try:
-                origin_message_id = await event_context.get_query_var("origin_message_id")
-            except Exception:
-                origin_message_id = None
-
-            try:
-                origin_message_type = await event_context.get_query_var("origin_message_type")
-            except Exception:
-                origin_message_type = None
-
-            try:
-                origin_message_text = await event_context.get_query_var("origin_message_text")
-            except Exception:
-                origin_message_text = None
+            # Get original message info
+            origin_message_id = await safe_get_query_var("origin_message_id", None)
+            origin_message_type = await safe_get_query_var("origin_message_type", "text")
+            origin_message_text = await safe_get_query_var("origin_message_text", None)
 
             # 完整的对话上下文日志对象（移除 conversation_direction）
             log_obj: Dict[str, Any] = {
