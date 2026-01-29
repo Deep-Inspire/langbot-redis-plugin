@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from langbot_plugin.api.definition.plugin import BasePlugin
+
+# Debug flag for verbose logging
+DEBUG_MODE = os.getenv('DEBUG_WECOM_REDIS', 'false').lower() in ('true', '1', 'yes')
 
 
 class WecomAssistantPlugin(BasePlugin):
@@ -16,28 +21,40 @@ class WecomAssistantPlugin(BasePlugin):
         super().__init__()
         self._redis = None
         self._logger = self._setup_logger()
+        self._last_health_check = 0  # Timestamp of last health check
+        self._health_check_interval = 30  # Seconds between health checks
 
     def _setup_logger(self):
-        """Setup file logger for better debugging"""
+        """Setup file logger with rotation to prevent unbounded growth"""
         log_dir = Path(__file__).parent / "logs"
         log_dir.mkdir(exist_ok=True)
 
-        log_file = log_dir / f"wecom_redis_plugin_{datetime.now().strftime('%Y%m%d')}.log"
+        log_file = log_dir / "wecom_redis_plugin.log"
 
         logger = logging.getLogger("WecomRedisPlugin")
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(logging.DEBUG if DEBUG_MODE else logging.INFO)
 
-        # Avoid adding duplicate handlers
-        if not logger.handlers:
-            file_handler = logging.FileHandler(log_file, encoding='utf-8')
-            file_handler.setLevel(logging.DEBUG)
+        # Clear existing handlers to prevent duplicates
+        if logger.handlers:
+            for handler in logger.handlers[:]:
+                handler.close()
+                logger.removeHandler(handler)
 
-            formatter = logging.Formatter(
-                '[%(asctime)s] [%(levelname)s] %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S'
-            )
-            file_handler.setFormatter(formatter)
-            logger.addHandler(file_handler)
+        # Use RotatingFileHandler: max 5MB per file, keep 3 backups
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=5 * 1024 * 1024,  # 5MB
+            backupCount=3,
+            encoding='utf-8'
+        )
+        file_handler.setLevel(logging.DEBUG if DEBUG_MODE else logging.INFO)
+
+        formatter = logging.Formatter(
+            '[%(asctime)s] [%(levelname)s] %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
 
         return logger
 
@@ -48,51 +65,69 @@ class WecomAssistantPlugin(BasePlugin):
         cfg = self.get_config()
         redis_url = cfg.get("redis_url") or "redis://127.0.0.1:6379/0"
 
-        # Create new connection if not exists
-        if self._redis is None:
-            self._logger.info(f"Creating new Redis connection to {redis_url}")
-            try:
-                self._redis = redis.from_url(
-                    redis_url,
-                    encoding="utf-8",
-                    decode_responses=True,
-                    socket_timeout=5,
-                    socket_connect_timeout=5,
-                    socket_keepalive=True,
-                    health_check_interval=30,
-                    retry_on_timeout=True,
-                    max_connections=10,
-                )
-                self._logger.info("Redis connection created successfully")
-            except Exception as e:
-                self._logger.error(f"Failed to create Redis connection: {e}", exc_info=True)
-                raise
+        max_retries = 3
 
-        # Health check
-        try:
-            await self._redis.ping()
-            self._logger.debug("Redis health check passed")
-        except Exception as e:
-            self._logger.warning(f"Redis health check failed: {e}, reconnecting...")
-            try:
-                await self._redis.close()
-            except Exception:
-                pass
-            self._redis = None
-            # Recursive call to reconnect
-            return await self.get_redis()
+        for attempt in range(max_retries):
+            # Create new connection if not exists
+            if self._redis is None:
+                self._logger.info(f"Creating new Redis connection to {redis_url}")
+                try:
+                    self._redis = redis.from_url(
+                        redis_url,
+                        encoding="utf-8",
+                        decode_responses=True,
+                        socket_timeout=5,
+                        socket_connect_timeout=5,
+                        socket_keepalive=True,
+                        health_check_interval=30,
+                        retry_on_timeout=True,
+                        max_connections=10,
+                    )
+                    self._last_health_check = time.time()
+                    self._logger.info("Redis connection created successfully")
+                except Exception as e:
+                    self._logger.error(f"Failed to create Redis connection: {e}")
+                    if attempt < max_retries - 1:
+                        continue
+                    raise
 
-        return self._redis
+            # Health check with interval (not every request)
+            current_time = time.time()
+            if current_time - self._last_health_check >= self._health_check_interval:
+                try:
+                    await self._redis.ping()
+                    self._last_health_check = current_time
+                    if DEBUG_MODE:
+                        self._logger.debug("Redis health check passed")
+                except Exception as e:
+                    self._logger.warning(f"Redis health check failed: {e}, reconnecting...")
+                    try:
+                        await self._redis.close()
+                    except Exception:
+                        pass
+                    self._redis = None
+                    if attempt < max_retries - 1:
+                        continue
+                    raise
+
+            return self._redis
+
+        raise Exception("Failed to get Redis connection after max retries")
 
     async def on_unload(self):
-        """Clean up Redis connection"""
+        """Clean up Redis connection and logger handlers"""
         self._logger.info("Plugin unloading, closing Redis connection...")
         if self._redis is not None:
             try:
                 await self._redis.close()
                 self._logger.info("Redis connection closed successfully")
             except Exception as e:
-                self._logger.error(f"Error closing Redis connection: {e}", exc_info=True)
+                self._logger.error(f"Error closing Redis connection: {e}")
             finally:
                 self._redis = None
+
+        # Clean up logger handlers to prevent memory leaks
+        for handler in self._logger.handlers[:]:
+            handler.close()
+            self._logger.removeHandler(handler)
 

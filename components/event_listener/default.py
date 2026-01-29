@@ -1,6 +1,7 @@
 # components/event_listener/default.py
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -14,13 +15,31 @@ from langbot_plugin.api.entities.builtin.platform import message as platform_mes
 DEBUG_WECOM_REDIS = os.getenv('DEBUG_WECOM_REDIS', 'false').lower() in ('true', '1', 'yes')
 
 
+async def _safe_get_query_var(event_context: context.EventContext, key: str, default=None):
+    """Safely get query variable with default value, avoiding KeyError exceptions"""
+    try:
+        value = await event_context.get_query_var(key)
+        if DEBUG_WECOM_REDIS:
+            print(f"[WeComRedisLogger-DEBUG] Got {key} from query context: {value}")
+        return value
+    except Exception as e:
+        if DEBUG_WECOM_REDIS:
+            print(f"[WeComRedisLogger-DEBUG] Failed to get {key}, using default: {default} (error: {e})")
+        return default
+
+
 class DefaultEventListener(EventListener):
+    _initialized = False  # Guard against duplicate initialization
+
     async def initialize(self):
         """
         Register event handlers for incoming messages and LLM responses.
         """
+        # Prevent duplicate handler registration
+        if DefaultEventListener._initialized:
+            return
+        DefaultEventListener._initialized = True
 
-     
         @self.handler(events.PersonNormalMessageReceived)
         @self.handler(events.GroupNormalMessageReceived)
         async def on_normal_message_received(event_context: context.EventContext):
@@ -103,31 +122,18 @@ class DefaultEventListener(EventListener):
                 print(f"[WeComRedisLogger-DEBUG] launcher_id: {launcher_id}")
                 print(f"[WeComRedisLogger-DEBUG] sender_id: {event.sender_id}")
 
-            # Helper function to safely get query variables with fallback
-            async def safe_get_query_var(key: str, default=None):
-                """Safely get query variable with default value, avoiding KeyError exceptions"""
-                try:
-                    value = await event_context.get_query_var(key)
-                    if DEBUG_WECOM_REDIS:
-                        print(f"[WeComRedisLogger-DEBUG] Got {key} from query context: {value}")
-                    return value
-                except Exception as e:
-                    if DEBUG_WECOM_REDIS:
-                        print(f"[WeComRedisLogger-DEBUG] Failed to get {key}, using default: {default} (error: {e})")
-                    return default
-
             # Get identity info from query context with fallbacks
-            internal_agent_id = await safe_get_query_var("internal_agent_id", launcher_id)
-            external_customer_id = await safe_get_query_var("external_customer_id", str(event.sender_id))
+            internal_agent_id = await _safe_get_query_var(event_context, "internal_agent_id", launcher_id)
+            external_customer_id = await _safe_get_query_var(event_context, "external_customer_id", str(event.sender_id))
 
             reply_text = event.response_text
             ts = int(time.time())
             reply_message_type = "text"
 
             # Get original message info
-            origin_message_id = await safe_get_query_var("origin_message_id", None)
-            origin_message_type = await safe_get_query_var("origin_message_type", "text")
-            origin_message_text = await safe_get_query_var("origin_message_text", None)
+            origin_message_id = await _safe_get_query_var(event_context, "origin_message_id", None)
+            origin_message_type = await _safe_get_query_var(event_context, "origin_message_type", "text")
+            origin_message_text = await _safe_get_query_var(event_context, "origin_message_text", None)
 
             # 完整的对话上下文日志对象（移除 conversation_direction）
             log_obj: Dict[str, Any] = {
@@ -154,7 +160,6 @@ class DefaultEventListener(EventListener):
                     json_str = json.dumps(log_obj, ensure_ascii=False)
 
                     # Execute Redis operations with timeout
-                    import asyncio
                     await asyncio.wait_for(
                         redis.rpush(redis_list_key, json_str),
                         timeout=3.0
