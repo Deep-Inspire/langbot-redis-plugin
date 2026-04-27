@@ -44,6 +44,28 @@ spec:
         zh_Hans: '每个机器人一个 Stream 的 Key 前缀，如 langbot:wecom:stream'
       default: 'langbot:wecom:stream'
       required: false
+
+    - name: stream_maxlen
+      type: integer
+      label:
+        en_US: Redis Stream Max Length
+        zh_Hans: Redis Stream 最大长度
+      description:
+        en_US: 'Approximate max length for each bot-level Redis Stream. Values below 100000 are raised to 100000.'
+        zh_Hans: '每个机器人 Redis Stream 的近似最大长度。低于 100000 的值会按 100000 处理。'
+      default: 100000
+      required: false
+
+    - name: intercept_reply
+      type: boolean
+      label:
+        en_US: Intercept WeWork Finance Replies
+        zh_Hans: 拦截企业微信会话存档回复
+      description:
+        en_US: 'When enabled, replies from WeWork Finance archive adapters are logged to Redis and not sent by the original adapter.'
+        zh_Hans: '启用后，企业微信会话存档适配器的回复会写入 Redis，且不再由原适配器发送。'
+      default: true
+      required: false
          
   components:
       EventListener:
